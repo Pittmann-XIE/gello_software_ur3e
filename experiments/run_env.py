@@ -236,7 +236,10 @@ def main(args):
     save_interface = None
     if args.use_save_interface:
         save_interface = SaveInterface(
-            data_dir=args.data_dir, agent_name=args.agent, expand_user=True
+            data_dir=args.data_dir,
+            agent_name=args.agent,
+            expand_user=True,
+            on_start_recording=robot_client.reference_gripper,
         )
 
     run_control_loop(env, agent, save_interface, use_colors=True)

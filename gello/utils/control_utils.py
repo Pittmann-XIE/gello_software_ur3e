@@ -3,7 +3,7 @@
 import datetime
 import time
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Callable, Dict, Optional
 
 import numpy as np
 
@@ -77,6 +77,7 @@ class SaveInterface:
         data_dir: str = "data",
         agent_name: str = "Agent",
         expand_user: bool = False,
+        on_start_recording: Optional[Callable[[], None]] = None,
     ):
         """Initialize save interface.
 
@@ -91,6 +92,8 @@ class SaveInterface:
         self.data_dir = Path(data_dir).expanduser() if expand_user else Path(data_dir)
         self.agent_name = agent_name
         self.save_path: Optional[Path] = None
+        self._writer = None
+        self._on_start_recording = on_start_recording
 
         print("Save interface enabled. Use keyboard controls:")
         print("  S: Start recording")
@@ -106,24 +109,37 @@ class SaveInterface:
         Returns:
             Optional[str]: "quit" if user wants to exit, None otherwise
         """
-        from gello.data_utils.format_obs import save_frame
+        from gello.data_utils.format_obs import HDF5EpisodeWriter
 
-        dt = datetime.datetime.now()
         state = self.kb_interface.update()
 
         if state == "start":
+            if self._writer is not None:
+                self._writer.close()
+                self._writer = None
+            if self._on_start_recording is not None:
+                self._on_start_recording()
             dt_time = datetime.datetime.now()
             self.save_path = (
                 self.data_dir / self.agent_name / dt_time.strftime("%m%d_%H%M%S")
             )
             self.save_path.mkdir(parents=True, exist_ok=True)
             print(f"Saving to {self.save_path}")
+            self._writer = HDF5EpisodeWriter(folder=self.save_path, timestamp=dt_time)
         elif state == "save":
-            if self.save_path is not None:
-                save_frame(self.save_path, dt, obs, action)
+            if self._writer is not None:
+                self._writer.append(obs, action)
         elif state == "normal":
+            if self._writer is not None:
+                self._writer.close()
+                print(f"Saved episode file: {self._writer.file_path}")
+                self._writer = None
             self.save_path = None
         elif state == "quit":
+            if self._writer is not None:
+                self._writer.close()
+                print(f"Saved episode file: {self._writer.file_path}")
+                self._writer = None
             print("\nExiting.")
             return "quit"
         else:

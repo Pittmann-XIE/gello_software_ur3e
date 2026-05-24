@@ -50,6 +50,10 @@ class Robot(Protocol):
         """
         raise NotImplementedError
 
+    def reference_gripper(self) -> None:
+        """Reference or home the gripper if the robot supports it."""
+        pass
+
 
 class PrintRobot(Robot):
     """A robot that prints the commanded joint state."""
@@ -83,6 +87,9 @@ class PrintRobot(Robot):
             "ee_pos_quat": pos_quat,
             "gripper_position": np.array(0),
         }
+
+    def reference_gripper(self) -> None:
+        pass
 
 
 class BimanualRobot(Robot):
@@ -118,6 +125,11 @@ class BimanualRobot(Robot):
                 raise RuntimeError()
 
         return return_obs
+
+    def reference_gripper(self) -> None:
+        for robot in (self._robot_l, self._robot_r):
+            if hasattr(robot, "reference_gripper"):
+                robot.reference_gripper()
 
 
 def main():

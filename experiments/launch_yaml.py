@@ -4,7 +4,7 @@ import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Tuple
 
 import tyro
 import zmq.error
@@ -16,6 +16,12 @@ from gello.utils.launch_utils import instantiate_from_dict
 active_threads = []
 active_servers = []
 cleanup_in_progress = False
+CAMERA_NAME_TO_PORT = {
+    "wrist": 5000,
+    "top": 5001,
+    "front": 5002,
+}
+CAMERA_ALIASES = {"writs": "wrist"}
 
 
 def cleanup():
@@ -73,6 +79,12 @@ class Args:
 
     use_save_interface: bool = False
     """Enable saving data with keyboard interface."""
+    use_camera_clients: bool = False
+    """Attach ZMQ camera clients to observations for recording."""
+    camera_names: Tuple[str, ...] = ("wrist", "top", "front")
+    """Camera names to attach when use_camera_clients=True."""
+    camera_host: str = "127.0.0.1"
+    """Camera server host for ZMQ camera clients."""
 
 
 def signal_handler(signum, frame):
@@ -81,6 +93,36 @@ def signal_handler(signum, frame):
     import os
 
     os._exit(0)
+
+
+def validate_leader_follower_dims(env, agent):
+    """Validate that leader and follower have matching action/state dimensions."""
+    obs = env.get_obs()
+    leader_action = agent.act(obs)
+    follower_joints = obs["joint_positions"]
+    if len(leader_action) != len(follower_joints):
+        raise ValueError(
+            "Leader/follower dimension mismatch: "
+            f"agent outputs {len(leader_action)} DOF, "
+            f"robot reports {len(follower_joints)} DOF. "
+            "Check UR gripper mode (`robot.no_gripper`) and agent start/config."
+        )
+
+
+def _canonical_camera_name(name: str) -> str:
+    return CAMERA_ALIASES.get(name, name)
+
+
+def resolve_camera_names(camera_names: Tuple[str, ...]) -> Tuple[str, ...]:
+    resolved = []
+    for name in camera_names:
+        canonical = _canonical_camera_name(name)
+        if canonical not in CAMERA_NAME_TO_PORT:
+            valid = ", ".join(CAMERA_NAME_TO_PORT)
+            raise ValueError(f"Unknown camera `{name}`. Choose from: {valid}")
+        if canonical not in resolved:
+            resolved.append(canonical)
+    return tuple(resolved)
 
 
 def main():
@@ -195,6 +237,22 @@ def main():
         robot_client = ZMQClientRobot(port=hardware_port, host=hardware_host)
 
     env = RobotEnv(robot_client, control_rate_hz=cfg.get("hz", 30))
+    if args.use_camera_clients:
+        from gello.zmq_core.camera_node import ZMQClientCamera
+
+        camera_names = resolve_camera_names(args.camera_names)
+        camera_dict = {
+            name: ZMQClientCamera(
+                port=CAMERA_NAME_TO_PORT[name], host=args.camera_host
+            )
+            for name in camera_names
+        }
+        env = RobotEnv(
+            robot_client, control_rate_hz=cfg.get("hz", 30), camera_dict=camera_dict
+        )
+        print(f"Attached camera clients: {', '.join(camera_names)}")
+    else:
+        env = RobotEnv(robot_client, control_rate_hz=cfg.get("hz", 30))
 
     # Move robot to start_joints position if specified in config
     from gello.utils.launch_utils import move_to_start_position
@@ -203,6 +261,8 @@ def main():
         move_to_start_position(env, bimanual, left_cfg, right_cfg)
     else:
         move_to_start_position(env, bimanual, left_cfg)
+
+    validate_leader_follower_dims(env, agent)
 
     print(
         f"Launching robot: {robot.__class__.__name__}, agent: {agent.__class__.__name__}"
@@ -214,10 +274,13 @@ def main():
     # Initialize save interface if requested
     save_interface = None
     if args.use_save_interface:
+        save_root = Path(args.left_config_path).parents[1] / "data"
+        print(f"Save root: {save_root}")
         save_interface = SaveInterface(
-            data_dir=Path(args.left_config_path).parents[1] / "data",
+            data_dir=save_root,
             agent_name=agent.__class__.__name__,
             expand_user=True,
+            on_start_recording=robot_client.reference_gripper,
         )
 
     # Run main control loop

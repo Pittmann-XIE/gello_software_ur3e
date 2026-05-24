@@ -48,6 +48,11 @@ class ZMQServerRobot:
                     result = self._robot.command_joint_state(**args)
                 elif method == "get_observations":
                     result = self._robot.get_observations()
+                elif method == "reference_gripper":
+                    if hasattr(self._robot, "reference_gripper"):
+                        result = self._robot.reference_gripper()
+                    else:
+                        result = None
                 else:
                     result = {"error": "Invalid method"}
                     print(result)
@@ -133,6 +138,15 @@ class ZMQClientRobot(Robot):
             return result
         except zmq.Again:
             raise RuntimeError("ZMQ timeout - robot may be disconnected")
+
+    def reference_gripper(self) -> None:
+        request = {"method": "reference_gripper"}
+        send_message = pickle.dumps(request)
+        self._socket.send(send_message)
+        result = pickle.loads(self._socket.recv())
+        if isinstance(result, dict) and "error" in result:
+            raise RuntimeError(result["error"])
+        return result
 
     def close(self) -> None:
         """Close the ZMQ socket and context."""

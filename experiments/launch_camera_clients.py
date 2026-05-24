@@ -6,12 +6,23 @@ import tyro
 
 from gello.zmq_core.camera_node import ZMQClientCamera
 
+CAMERA_NAME_TO_PORT = {
+    "wrist": 5000,
+    "top": 5001,
+    "front": 5002,
+}
+CAMERA_ALIASES = {"writs": "wrist"}
+
 
 @dataclass
 class Args:
-    ports: Tuple[int, ...] = (5000, 5001)
+    camera_names: Tuple[str, ...] = ("wrist", "top", "front")
     hostname: str = "127.0.0.1"
     # hostname: str = "128.32.175.167"
+
+
+def _canonical_camera_name(name: str) -> str:
+    return CAMERA_ALIASES.get(name, name)
 
 
 def main(args):
@@ -19,9 +30,14 @@ def main(args):
     import cv2
 
     images_display_names = []
-    for port in args.ports:
+    for camera_name in args.camera_names:
+        camera_name = _canonical_camera_name(camera_name)
+        if camera_name not in CAMERA_NAME_TO_PORT:
+            valid = ", ".join(CAMERA_NAME_TO_PORT)
+            raise ValueError(f"Unknown camera `{camera_name}`. Choose from: {valid}")
+        port = CAMERA_NAME_TO_PORT[camera_name]
         cameras.append(ZMQClientCamera(port=port, host=args.hostname))
-        images_display_names.append(f"image_{port}")
+        images_display_names.append(camera_name)
         cv2.namedWindow(images_display_names[-1], cv2.WINDOW_NORMAL)
 
     while True:

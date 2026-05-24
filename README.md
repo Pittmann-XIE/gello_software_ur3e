@@ -228,9 +228,71 @@ Launch the real robot with the auto-generated hardware config file:
 python experiments/launch_yaml.py --left-config-path configs/yam_auto_generated.yaml
 ```
 
+### UR3e + GELLO + WSG Data Collection
+
+This is the recommended UR3e leader-follower workflow for data collection in this repository.
+
+**Preflight checklist (safety):**
+- Robot reachable over LAN (`ping <robot_ip>`) and UR controller in remote/control-ready mode.
+- Emergency stop is reachable and tested before teleop.
+- Leader (GELLO) and follower (UR3e) are placed in a compatible, non-singular posture.
+- Start with conservative control frequency (`hz: 30` in `configs/ur3e_gello_hw.yaml`).
+
+**Dependencies and permissions:**
+- Install UR interface dependency: [ur_rtde](https://sdurobotics.gitlab.io/ur_rtde/installation/installation.html)
+- Ensure serial device access for GELLO (`dialout` group on Linux if needed).
+- WSG is the default gripper (`gripper_type: "wsg"`). Robotiq remains available with `gripper_type: "robotiq"`.
+
+**1) Calibrate/verify GELLO offsets (one-time or after reassembly):**
+```bash
+python scripts/gello_get_offset.py \
+    --start-joints 0 -1.57 1.57 -1.57 -1.57 0 \
+    --joint-signs 1 1 -1 1 1 1 \
+    --port /dev/serial/by-id/<your_gello_port>
+```
+Use the output in either:
+- `configs/ur3e_gello_hw.yaml` via `agent.dynamixel_config`, or
+- `gello/agents/gello_agent.py` (`PORT_CONFIG_MAP`) if you prefer port-based defaults.
+
+**2) Edit the UR3e YAML config:**
+- File: `configs/ur3e_gello_hw.yaml`
+- Set:
+  - `robot.robot_ip` to your UR3e IP
+  - `agent.port` to your GELLO serial-by-id path
+  - `robot.wsg_port` to your WSG serial port, or set `gripper_type: "robotiq"` for Robotiq
+  - `robot.no_gripper` to `true` only for arm-only collection
+  - `agent.start_joints` to your preferred safe start posture
+
+At the beginning of every saved episode, the launcher calls `reference_gripper()` through the robot server. For WSG this executes the WSG reference/homing command before HDF5 recording starts.
+
+**3) Launch leader-follower + recording interface:**
+```bash
+python experiments/launch_yaml.py --left-config-path configs/ur3e_gello_hw.yaml --use-save-interface
+```
+
+Optional camera capture (3 RealSense):
+```bash
+python experiments/launch_camera_nodes.py --camera-names wrist top front --interactive-select --width 640 --height 480 --fps 30
+python experiments/launch_yaml.py --left-config-path configs/ur3e_gello_hw.yaml --use-save-interface --use-camera-clients --camera-names wrist top front
+```
+When camera launcher starts, choose which connected cameras to use before recording begins.
+
+**Recording controls:**
+- Press `S` to start recording an episode.
+- Press `Q` to stop/reset recording state.
+
+Episodes are saved as `.h5` files under:
+- `data/<AgentName>/<MMDD_HHMMSS>/`
+
+**4) Post-process collected trajectories:**
+`demo_to_gdict.py` currently expects legacy `.h5` frame dumps.  
+For this UR3e flow, each episode is already stored as one `.h5` file for downstream training.
+
 ### Launching `gello_agent` for non-YAM arms
 
-For other robots or if not using a YAML configuration, you must launch the robot and controller nodes in separate terminals.
+This is a compatibility fallback path. Prefer the YAML workflow above for reproducibility.
+
+For other robots or if not using a YAML configuration, launch the robot and controller nodes in separate terminals.
 
 First, install robot-specific dependencies:
 - **UR**: [ur_rtde](https://sdurobotics.gitlab.io/ur_rtde/installation/installation.html)
@@ -278,6 +340,12 @@ For the YAM arm launched with `launch_yaml.py`, you can append the flag `--use-s
 python experiments/launch_yaml.py --left-config-path configs/yam_passive.yaml --use-save-interface
 ```
 After launching, you can begin saving with `s` and stop saving with `q`. Data saved will be in the `data` directory in the root of the project.
+Each recording is now one `.h5` file per episode.
+
+The same save interface is supported for UR3e with:
+```bash
+python experiments/launch_yaml.py --left-config-path configs/ur3e_gello_hw.yaml --use-save-interface
+```
 
 For non-YAM setups, use the following:
 ```bash
@@ -287,6 +355,7 @@ Process collected data:
 ```bash
 python gello/data_utils/demo_to_gdict.py --source-dir=<source_dir>
 ```
+Note: `demo_to_gdict.py` currently consumes legacy `.pkl` frame data.
 
 ### Bimanual Operation
 

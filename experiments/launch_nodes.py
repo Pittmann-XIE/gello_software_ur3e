@@ -10,9 +10,14 @@ from gello.zmq_core.robot_node import ZMQServerRobot
 @dataclass
 class Args:
     robot: str = "xarm"
+    """Robot type: sim_ur|sim_yam|sim_panda|sim_xarm|ur|xarm|panda|yam|bimanual_ur|print."""
     robot_port: int = 6001
     hostname: str = "127.0.0.1"
     robot_ip: str = "192.168.1.10"
+    no_gripper: bool = False
+    gripper_type: str = "wsg"
+    wsg_port: str = "/dev/ttyACM0"
+    wsg_max_width_mm: float = 110.0
 
 
 def launch_robot_server(args: Args):
@@ -73,7 +78,13 @@ def launch_robot_server(args: Args):
         elif args.robot == "ur":
             from gello.robots.ur import URRobot
 
-            robot = URRobot(robot_ip=args.robot_ip)
+            robot = URRobot(
+                robot_ip=args.robot_ip,
+                no_gripper=args.no_gripper,
+                gripper_type=args.gripper_type,
+                wsg_port=args.wsg_port,
+                wsg_max_width_mm=args.wsg_max_width_mm,
+            )
         elif args.robot == "panda":
             from gello.robots.panda import PandaRobot
 
@@ -94,7 +105,9 @@ def launch_robot_server(args: Args):
 
         else:
             raise NotImplementedError(
-                f"Robot {args.robot} not implemented, choose one of: sim_ur, xarm, ur, bimanual_ur, none"
+                "Robot "
+                f"{args.robot} not implemented, choose one of: "
+                "sim_ur, sim_yam, sim_panda, sim_xarm, xarm, ur, panda, yam, bimanual_ur, print"
             )
         server = ZMQServerRobot(robot, port=port, host=args.hostname)
         print(f"Starting robot server on port {port}")

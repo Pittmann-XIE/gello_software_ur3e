@@ -8,7 +8,14 @@ from gello.robots.robot import Robot
 class URRobot(Robot):
     """A class representing a UR robot."""
 
-    def __init__(self, robot_ip: str = "192.168.1.10", no_gripper: bool = False):
+    def __init__(
+        self,
+        robot_ip: str = "192.168.1.10",
+        no_gripper: bool = False,
+        gripper_type: str = "wsg",
+        wsg_port: str = "/dev/ttyACM0",
+        wsg_max_width_mm: float = 110.0,
+    ):
         import rtde_control
         import rtde_receive
 
@@ -20,19 +27,32 @@ class URRobot(Robot):
             print(robot_ip)
 
         self.r_inter = rtde_receive.RTDEReceiveInterface(robot_ip)
-        if not no_gripper:
+        self._gripper_type = None if no_gripper else gripper_type
+        if self._gripper_type == "robotiq":
             from gello.robots.robotiq_gripper import RobotiqGripper
 
             self.gripper = RobotiqGripper()
             self.gripper.connect(hostname=robot_ip, port=63352)
-            print("gripper connected")
+            print("robotiq gripper connected")
             # gripper.activate()
+        elif self._gripper_type == "wsg":
+            from gello.robots.wsg_gripper import WSGGripper
+
+            self.gripper = WSGGripper(
+                port_name=wsg_port, max_width_mm=wsg_max_width_mm
+            )
+            print("wsg gripper connected")
+        elif self._gripper_type is not None:
+            raise ValueError(
+                f"Unsupported gripper_type `{gripper_type}`. "
+                "Choose `wsg`, `robotiq`, or set no_gripper=True."
+            )
 
         [print("connect") for _ in range(4)]
 
         self._free_drive = False
         self.robot.endFreedriveMode()
-        self._use_gripper = not no_gripper
+        self._use_gripper = self._gripper_type is not None
 
     def num_dofs(self) -> int:
         """Get the number of joints of the robot.
@@ -47,10 +67,14 @@ class URRobot(Robot):
     def _get_gripper_pos(self) -> float:
         import time
 
-        time.sleep(0.01)
-        gripper_pos = self.gripper.get_current_position()
-        assert 0 <= gripper_pos <= 255, "Gripper position must be between 0 and 255"
-        return gripper_pos / 255
+        if self._gripper_type == "robotiq":
+            time.sleep(0.01)
+            gripper_pos = self.gripper.get_current_position()
+            assert 0 <= gripper_pos <= 255, "Gripper position must be between 0 and 255"
+            return gripper_pos / 255
+        if self._gripper_type == "wsg":
+            return self.gripper.get_current_position()
+        return 0.0
 
     def get_joint_state(self) -> np.ndarray:
         """Get the current state of the leader robot.
@@ -83,10 +107,22 @@ class URRobot(Robot):
         self.robot.servoJ(
             robot_joints, velocity, acceleration, dt, lookahead_time, gain
         )
-        if self._use_gripper:
+        if self._gripper_type == "robotiq":
             gripper_pos = joint_state[-1] * 255
             self.gripper.move(gripper_pos, 255, 10)
+        elif self._gripper_type == "wsg":
+            self.gripper.move(joint_state[-1])
         self.robot.waitPeriod(t_start)
+
+    def reference_gripper(self) -> None:
+        if self._gripper_type == "wsg":
+            self.gripper.reference()
+        elif self._gripper_type == "robotiq":
+            print("Robotiq gripper does not require WSG reference.")
+
+    def close(self) -> None:
+        if self._use_gripper and hasattr(self.gripper, "close_connection"):
+            self.gripper.close_connection()
 
     def freedrive_enabled(self) -> bool:
         """Check if the robot is in freedrive mode.
